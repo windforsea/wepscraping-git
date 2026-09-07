@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "ipykernel>=7.3.0",
+    "pandas>=3.0.5",
+    "requests>=2.34.2",
+    "selenium>=4.48.0",
+]
 
 [project.scripts]
 wepscraping-git = "wepscraping_git:main"
