@@ -1,0 +1,30 @@
+﻿# Python 가상환경 및 패키지 캐시
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*.class
+*.egg-info/
+dist/
+build/
+
+# 환경 변수 및 보안 관련
+.env
+.env.*
+!.env.example
+
+# 크롤링/스크래핑 결과 데이터 및 로그
+data/
+logs/
+*.log
+*.csv
+*.sqlite
+*.sqlite3
+
+# IDE 및 OS 설정 파일
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
