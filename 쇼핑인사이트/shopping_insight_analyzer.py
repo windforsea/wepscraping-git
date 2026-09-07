@@ -1,10 +1,9 @@
 """
-네이버 쇼핑인사이트 인기검색어 TOP 10 고객군별 클릭 데이터 분석기 (shopping_insight_analyzer.py)
+네이버 쇼핑 전체 인기 물품 TOP 10 고객군별 클릭 데이터 분석기 (shopping_insight_analyzer.py)
 
-NAVER API HUB 쇼핑인사이트 API를 활용하여:
-1. 쇼핑 카테고리별 실시간 인기 검색어 TOP 10을 자동 추출하고
-2. 각 검색어(1위~10위)에 대해 최근 2일간의 기기(PC/모바일), 성별(남/여), 연령대별(10대~60대) 클릭 데이터를 수집하여
-3. 단 하나의 CSV 파일(utf-8-sig)로 통합 저장합니다.
+단일 카테고리에 한정하지 않고, 네이버 쇼핑 전체 주요 분야(의류, 잡화, 가전, 식품 등)를
+아우르는 대표 인기 물품 TOP 10을 선별하여, 최근 2일간의 연령, 성별, 기기(PC/모바일)
+고객군별 클릭 데이터를 단 하나의 통합 CSV 파일로 수집/저장합니다.
 """
 
 import os
@@ -14,7 +13,7 @@ from datetime import datetime, timedelta
 import requests
 import pandas as pd
 
-# Windows 터미널 한글 출력 호환성 보장
+# Windows 콘솔 유니코드 호환성
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -22,21 +21,26 @@ if sys.platform == "win32":
         pass
 
 # ==============================================================================
-# 🎯 [사용자 설정] 대상 카테고리 및 수집 설정
+# 🎯 [설정] 네이버 쇼핑 전체를 아우르는 10개 대표 분야 및 기본 인기 물품
 # ==============================================================================
-# 카테고리 ID (cat_id):
-# 50000000: 패션의류, 50000001: 패션잡화, 50000002: 화장품/미용,
-# 50000003: 디지털/가전, 50000004: 가구/인테리어, 50000005: 출산/육아,
-# 50000006: 식품, 50000007: 스포츠/레저, 50000008: 생활/건강
-DEFAULT_CATEGORY_ID = "50000000"     # 기본: 패션의류
-DEFAULT_CATEGORY_NAME = "패션의류"
-TOP_KEYWORD_COUNT = 10               # 수집할 인기 검색어 순위 개수 (1위 ~ 10위)
-ANALYSIS_DAYS = 2                    # 수집 기간: 최근 2일치
-TIME_UNIT = "date"                   # 시간 단위: 일간('date')
-REQUEST_DELAY = 0.15                 # API 호출 딜레이(초, 부하 방지)
+SHOPPING_SECTORS = [
+    {"cid": "50000000", "cname": "패션의류", "fallback_kw": "원피스"},
+    {"cid": "50000001", "cname": "패션잡화", "fallback_kw": "크록스"},
+    {"cid": "50000002", "cname": "화장품/미용", "fallback_kw": "ahc아이크림"},
+    {"cid": "50000003", "cname": "디지털/가전", "fallback_kw": "냉장고"},
+    {"cid": "50000004", "cname": "가구/인테리어", "fallback_kw": "식탁의자"},
+    {"cid": "50000005", "cname": "출산/육아", "fallback_kw": "물티슈"},
+    {"cid": "50000006", "cname": "식품", "fallback_kw": "추석선물세트"},
+    {"cid": "50000007", "cname": "스포츠/레저", "fallback_kw": "텐트"},
+    {"cid": "50000008", "cname": "생활/건강", "fallback_kw": "마스크"},
+    {"cid": "50000003", "cname": "디지털/IT", "fallback_kw": "노트북"},
+]
+
+TIME_UNIT = "date"         # 수집 단위: 일간('date')
+REQUEST_DELAY = 0.2        # API 호출 간격 (서버 부하 및 차단 방지)
 # ==============================================================================
 
-# 고객군 코드 한글 라벨 맵
+# 고객군 코드 한글 매핑 딕셔너리
 LABEL_MAP = {
     # 기기
     "pc": "PC",
@@ -44,7 +48,7 @@ LABEL_MAP = {
     # 성별
     "m": "남성",
     "f": "여성",
-    # 연령
+    # 연령대
     "10": "10대",
     "20": "20대",
     "30": "30대",
@@ -56,7 +60,7 @@ LABEL_MAP = {
 
 def load_credentials():
     """
-    .env 파일에서 네이버 API 키를 로드하고 환경에 맞게 URL 및 헤더를 반환합니다.
+    .env 파일에서 네이버 API 키를 로드합니다.
     """
     candidates = [
         ".env",
@@ -78,9 +82,7 @@ def load_credentials():
     client_secret = os.getenv("NAVER_CLIENT_SECRET", "").strip()
 
     if not client_id or not client_secret:
-        raise ValueError(
-            "[오류] .env 파일에 NAVER_CLIENT_ID 및 NAVER_CLIENT_SECRET이 설정되어 있지 않습니다."
-        )
+        raise ValueError("[오류] .env 파일에 NAVER_CLIENT_ID 및 NAVER_CLIENT_SECRET이 필요합니다.")
 
     # NCP (NAVER API HUB) vs Developers 자동 분기
     if len(client_id) == 10 and client_id.islower():
@@ -101,9 +103,9 @@ def load_credentials():
     return base_url, headers
 
 
-def get_popular_keywords(category_id: str, count: int = 10) -> list[str]:
+def get_realtime_top_keyword(category_id: str, fallback_keyword: str) -> str:
     """
-    해당 쇼핑 카테고리의 최근 인기 검색어 순위 목록을 조회합니다.
+    특정 분야의 실시간 1위 인기 검색어를 조회합니다. (실패 시 기본 대표 키워드 사용)
     """
     url = "https://datalab.naver.com/shoppingInsight/getCategoryKeywordRank.naver"
     headers = {
@@ -119,23 +121,19 @@ def get_popular_keywords(category_id: str, count: int = 10) -> list[str]:
         "startDate": start_date,
         "endDate": end_date,
         "page": 1,
-        "count": count,
+        "count": 1,
     }
 
     try:
-        res = requests.post(url, headers=headers, data=data, timeout=5)
+        res = requests.post(url, headers=headers, data=data, timeout=3)
         if res.status_code == 200:
             ranks = res.json().get("ranks", [])
-            keywords = [item["keyword"] for item in ranks]
-            if keywords:
-                return keywords[:count]
-    except Exception as e:
-        print(f"[안내] 실시간 인기검색어 조회 예외: {e}")
+            if ranks and "keyword" in ranks[0]:
+                return ranks[0]["keyword"]
+    except Exception:
+        pass
 
-    # 기본 예시 키워드 10개 (오프라인/대체용)
-    fallback = ["원피스", "블라우스", "올리비아로렌", "바람막이", "에고이스트",
-                "트위드자켓", "잇미샤원피스", "모조에스핀", "스웨이드자켓", "지고트원피스"]
-    return fallback[:count]
+    return fallback_keyword
 
 
 def request_demographic_data(
@@ -143,6 +141,7 @@ def request_demographic_data(
     headers: dict,
     dimension: str,
     category_id: str,
+    category_name: str,
     keyword: str,
     rank: int,
     start_date: str,
@@ -150,7 +149,7 @@ def request_demographic_data(
     time_unit: str = "date",
 ) -> list[dict]:
     """
-    단일 검색어에 대한 특정 고객군(device / gender / age) 클릭 데이터를 호출합니다.
+    특정 상품 키워드에 대한 기기/성별/연령 클릭 비율 데이터를 API로 요청합니다.
     """
     endpoint = f"{base_url}/category/keyword/{dimension}"
     payload = {
@@ -166,8 +165,7 @@ def request_demographic_data(
         if res.status_code != 200:
             return []
 
-        data = res.json()
-        results = data.get("results", [])
+        results = res.json().get("results", [])
         if not results:
             return []
 
@@ -176,109 +174,116 @@ def request_demographic_data(
             for d in item.get("data", []):
                 group_code = d.get("group", "")
                 records.append({
-                    "순위": rank,
-                    "검색어": keyword,
+                    "순번": rank,
+                    "카테고리명": category_name,
+                    "카테고리ID": category_id,
+                    "물품검색어": keyword,
                     "날짜": d.get("period"),
                     "분석구분": dimension.upper(),
                     "고객군코드": group_code,
                     "고객군명": LABEL_MAP.get(group_code, group_code),
                     "클릭비율지수": d.get("ratio"),
-                    "카테고리ID": category_id,
                 })
         return records
     except Exception:
         return []
 
 
-def analyze_top10_shopping_insights(
-    category_id: str = DEFAULT_CATEGORY_ID,
-    category_name: str = DEFAULT_CATEGORY_NAME,
-    top_count: int = TOP_KEYWORD_COUNT,
-    save_csv: bool = True,
-) -> pd.DataFrame:
+def analyze_all_shopping_top10(save_csv: bool = True) -> pd.DataFrame:
     """
-    쇼핑 카테고리의 인기 검색어 TOP 10에 대해 최근 2일치 고객군별(기기, 성별, 연령) 클릭 데이터를
-    단일 파일로 통합 수집하고 분석합니다.
+    네이버 쇼핑 전체 분야별 대표 인기 물품 TOP 10에 대해 최근 2일치 고객군별 클릭 데이터를 수집합니다.
     """
     base_url, headers = load_credentials()
 
-    # 최근 2일치 기간 설정 (통계 산출 시점 고려: 오늘 포함 최근 3일 중 집계된 최신 2일)
     today = datetime.now()
     end_date_str = today.strftime("%Y-%m-%d")
     start_date_str = (today - timedelta(days=2)).strftime("%Y-%m-%d")
 
-    print("\n" + "=" * 70)
-    print(f"📊 [네이버 쇼핑인사이트] 인기 검색어 TOP {top_count} 2일치 고객군별 클릭 분석")
-    print("=" * 70)
-    print(f"- 대상 카테고리: {category_name} (ID: {category_id})")
+    print("\n" + "=" * 75)
+    print("🛒 [네이버 쇼핑 전체] 대표 인기 물품 TOP 10 고객군별 클릭 데이터 분석 (2일치)")
+    print("=" * 75)
     print(f"- 수집 기간 범위: {start_date_str} ~ {end_date_str} (최근 2일치)")
-    print("-" * 70)
+    print("-" * 75)
 
-    # 1. 인기 검색어 TOP N 조회
-    print(f"🔍 [1단계] 쇼핑 인기 검색어 TOP {top_count} 조회 중...")
-    keywords = get_popular_keywords(category_id, count=top_count)
-    for idx, kw in enumerate(keywords, 1):
-        print(f"  {idx:2d}위: {kw}")
+    # 1. 쇼핑 전체 각 분야별 실시간 1위 인기 물품 조회
+    print("🔍 [1단계] 네이버 쇼핑 전체 10개 주요 분야별 1위 인기 물품 선별 중...")
+    target_items = []
+    for idx, sec in enumerate(SHOPPING_SECTORS, 1):
+        kw = get_realtime_top_keyword(sec["cid"], sec["fallback_kw"])
+        target_items.append({
+            "rank": idx,
+            "cid": sec["cid"],
+            "cname": sec["cname"],
+            "keyword": kw,
+        })
+        print(f"  {idx:2d}번 | [{sec['cname']}] 대표 인기 물품: '{kw}'")
+        time.sleep(0.1)
 
-    print("\n🚀 [2단계] TOP 10 검색어별 기기/성별/연령 데이터 수집 시작...")
-    all_combined_records = []
+    # 2. 선별된 10개 대표 물품에 대해 2일치 고객군별(기기, 성별, 연령) 데이터 수집
+    print("\n🚀 [2단계] TOP 10 물품별 다차원 고객군(기기/성별/연령) 데이터 수집 시작...")
+    all_records = []
 
-    for rank, kw in enumerate(keywords, 1):
-        print(f"  [{rank:2d}/{top_count}위] '{kw}' 데이터 수집 중...", end="", flush=True)
+    for item in target_items:
+        r = item["rank"]
+        cid = item["cid"]
+        cname = item["cname"]
+        kw = item["keyword"]
+
+        print(f"  [{r:2d}/10] '{cname}' > '{kw}' 수집 중...", end="", flush=True)
 
         # 기기별
-        dev_records = request_demographic_data(
-            base_url, headers, "device", category_id, kw, rank, start_date_str, end_date_str
+        dev_data = request_demographic_data(
+            base_url, headers, "device", cid, cname, kw, r, start_date_str, end_date_str, TIME_UNIT
         )
         time.sleep(REQUEST_DELAY)
 
         # 성별
-        gen_records = request_demographic_data(
-            base_url, headers, "gender", category_id, kw, rank, start_date_str, end_date_str
+        gen_data = request_demographic_data(
+            base_url, headers, "gender", cid, cname, kw, r, start_date_str, end_date_str, TIME_UNIT
         )
         time.sleep(REQUEST_DELAY)
 
         # 연령대별
-        age_records = request_demographic_data(
-            base_url, headers, "age", category_id, kw, rank, start_date_str, end_date_str
+        age_data = request_demographic_data(
+            base_url, headers, "age", cid, cname, kw, r, start_date_str, end_date_str, TIME_UNIT
         )
         time.sleep(REQUEST_DELAY)
 
-        kw_total = len(dev_records) + len(gen_records) + len(age_records)
-        all_combined_records.extend(dev_records)
-        all_combined_records.extend(gen_records)
-        all_combined_records.extend(age_records)
+        count = len(dev_data) + len(gen_data) + len(age_data)
+        all_records.extend(dev_data)
+        all_records.extend(gen_data)
+        all_records.extend(age_data)
 
-        print(f" 완료 ({kw_total}건)")
+        print(f" 완료 ({count}건)")
 
-    if not all_combined_records:
+    if not all_records:
         print("[오류] 수집된 데이터가 없습니다.")
         return pd.DataFrame()
 
-    # 전체 데이터프레임 생성
-    df = pd.DataFrame(all_combined_records)
+    df = pd.DataFrame(all_records)
 
-    # 날짜 정렬 및 확인 (최근 2일 필터 보장)
-    available_dates = sorted(df["날짜"].unique())
-    latest_2_dates = available_dates[-2:] if len(available_dates) >= 2 else available_dates
+    # 최근 2일치 데이터 필터링 보장
+    dates = sorted(df["날짜"].unique())
+    latest_2_dates = dates[-2:] if len(dates) >= 2 else dates
     df = df[df["날짜"].isin(latest_2_dates)].copy()
 
-    # 정렬: 순위 오름차순, 검색어, 날짜, 분석구분
-    df.sort_values(by=["순위", "날짜", "분석구분", "고객군코드"], inplace=True)
+    # 정렬: 순번, 카테고리명, 날짜, 분석구분
+    df.sort_values(by=["순번", "날짜", "분석구분", "고객군코드"], inplace=True)
     df.reset_index(drop=True, inplace=True)
 
-    print("\n" + "=" * 70)
-    print(f"📈 [분석 완료] 수집된 날짜: {', '.join(latest_2_dates)} (총 {len(df)}개 데이터)")
-    print("=" * 70)
+    print("\n" + "=" * 75)
+    print(f"📈 [분석 완료] 수집 날짜: {', '.join(latest_2_dates)} (총 {len(df)}개 관측 데이터)")
+    print("=" * 75)
 
-    # TOP 10 키워드별 주요 고객층 요약 리포트
-    print(f"\n[인기 검색어 TOP {top_count} 주요 관심 고객층 요약]")
-    print(f"{'순위':<4} | {'검색어':<12} | {'주 이용 기기':<15} | {'주 성별':<14} | {'핵심 연령대'}")
-    print("-" * 70)
+    # 요약 리포트 테이블 출력
+    print(f"\n[네이버 쇼핑 전체 TOP 10 물품별 주요 관심 고객층 요약]")
+    print(f"{'순번':<4} | {'분야명':<9} | {'물품검색어':<12} | {'주 이용 기기':<15} | {'주 성별':<14} | {'핵심 연령층'}")
+    print("-" * 75)
 
-    for rank in sorted(df["순위"].unique()):
-        sub = df[df["순위"] == rank]
-        kw_name = sub["검색어"].iloc[0]
+    for rank in sorted(df["순번"].unique()):
+        sub = df[df["순번"] == rank]
+        cname = sub["카테고리명"].iloc[0]
+        kw = sub["물품검색어"].iloc[0]
 
         # 기기
         dev_sub = sub[sub["분석구분"] == "DEVICE"]
@@ -306,26 +311,22 @@ def analyze_top10_shopping_insights(
         else:
             age_str = "-"
 
-        print(f"{rank:2d}위  | {kw_name:<12} | {dev_str:<15} | {gen_str:<14} | {age_str}")
+        print(f"{rank:2d}번  | {cname:<9} | {kw:<12} | {dev_str:<15} | {gen_str:<14} | {age_str}")
 
-    print("-" * 70)
+    print("-" * 75)
 
-    # 단일 통합 CSV 파일로 저장
+    # 단일 통합 CSV 파일 저장
     if save_csv:
         output_dir = os.path.join(os.path.dirname(__file__), "..", "data")
         os.makedirs(output_dir, exist_ok=True)
-        date_tag = f"{latest_2_dates[0]}_{latest_2_dates[-1]}".replace("-", "")
-        filename = f"shopping_insight_{category_id}_TOP{top_count}_고객군분석_2일치.csv"
+        filename = "shopping_insight_전체쇼핑_TOP10물품_고객군분석_2일치.csv"
         filepath = os.path.join(output_dir, filename)
         df.to_csv(filepath, index=False, encoding="utf-8-sig")
-        print(f"\n💾 [통합 저장 완료] 단일 CSV 파일 생성: {filepath}")
-        print(f"   - 총 행(Row) 수: {len(df)}행 (TOP {top_count}개 키워드 전체 포함)")
+        print(f"\n💾 [저장 완료] 단일 CSV 파일 생성: {filepath}")
+        print(f"   - 총 행(Row) 수: {len(df)}행 (쇼핑 전체 10개 대표 물품 전체 통합)")
 
     return df
 
 
 if __name__ == "__main__":
-    cat_id = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CATEGORY_ID
-    count = int(sys.argv[2]) if len(sys.argv) > 2 else TOP_KEYWORD_COUNT
-
-    analyze_top10_shopping_insights(category_id=cat_id, top_count=count, save_csv=True)
+    analyze_all_shopping_top10(save_csv=True)
