@@ -4,22 +4,26 @@
 
 ---
 
-## 👥 협업 역할 분담
+## 👥 협업 역할 및 개발 현황
 
 본 프로젝트는 2인의 공동 작업자가 각각의 트렌드 수집 모듈을 독립적으로 개발하고 통합합니다.
 
-| 담당자 / 역할 | 수집 대상 및 기능 | 사용 API 엔드포인트 | 저장 형식 |
-| :--- | :--- | :--- | :--- |
-| **담당자 A** | **네이버 통합 검색어 트렌드 조회**<br>- 주제어 및 하위 검색어별 기간별 검색 트렌드 조회<br>- 기기별(PC/모바일), 성별, 연령대별 조건 필터링 | `/v1/datalab/search` | `data/search_trend_{주제어}.csv` |
-| **담당자 B** | **네이버 쇼핑 검색어 트렌드 조회**<br>- 쇼핑 카테고리/분야별 인기 키워드 트렌드 조회<br>- 카테고리 내 검색어 클릭/조회 트렌드 비교 | `/v1/datalab/shopping/category/keywords` | `data/shopping_trend_{카테고리}.csv` |
+| 담당자 / 역할 | 수집 대상 및 기능 | 사용 API 엔드포인트 | 저장 형식 | 진행 현황 |
+| :--- | :--- | :--- | :--- | :---: |
+| **담당자 A**<br>(검색어트랜드) | **네이버 통합 검색어 트렌드 조회**<br>- 주제어 및 하위 검색어별 기간별 검색 트렌드 조회<br>- 기기별(PC/모바일), 성별, 연령대별 조건 필터링 | `/v1/datalab/search` | `data/search_trend_{주제어}.csv` | 진행 예정 |
+| **담당자 B (본인)**<br>(쇼핑인사이트) | **네이버 쇼핑 인기검색어 & 고객군별 분석**<br>- 쇼핑 카테고리별 실시간 인기 검색어 TOP 10 확인<br>- 연령, 성별, 기기 기준 고객군별 클릭 데이터 분석<br>- 주요 관심 고객층 및 이용 패턴 요약 도출 | `/shopping/v1/category/keyword/*` | `data/shopping_insight_{카테고리}_{검색어}_고객군분석.csv` | **✅ 개발 완료** |
 
 ---
 
 ## 📌 주요 기능
-- **다차원 트렌드 수집**: 기간(일간/주간/월간), 기기(PC/모바일), 성별, 연령대별 세부 검색량 트렌드 조회
-- **구조화된 CSV 저장**: 수집된 JSON 응답을 Pandas DataFrame으로 가공하여 `data/` 디렉터리에 `utf-8-sig` 인코딩 CSV로 자동 저장 (Excel 호환)
-- **보안 및 인증 관리**: `.env` 파일을 통해 Naver Client ID & Secret을 안전하게 격리 보관
-- **Git 원자적 커밋 및 협업**: 모듈별 기능 브랜치 개발 및 Conventional Commits 규칙 준수
+- **실시간 쇼핑 인기 검색어 파악**: 특정 쇼핑 분야의 실시간 TOP 10 인기 검색어 랭킹 조회
+- **다차원 고객군별 클릭 데이터 분석**:
+  - **기기별**: PC vs 모바일 클릭 이용 비중
+  - **성별**: 여성 vs 남성 클릭 비중
+  - **연령대별**: 10대 ~ 60대 이상 세대별 주요 관심 고객층 파악
+- **구조화된 CSV 저장**: 수집된 분석 결과를 `data/` 디렉터리에 `utf-8-sig` 인코딩 CSV로 자동 저장 (Excel 호환)
+- **보안 및 환경 격리**: `.env`를 통한 API 인증키 분리 보관, `.gitignore`를 통한 데이터/가상환경 추적 차단
+- **Git 원자적 커밋(Atomic Commits)**: Conventional Commits 규칙 준수 및 기능/문서 분할 커밋
 
 ---
 
@@ -27,17 +31,18 @@
 - **Language**: Python 3.14+
 - **Package Manager**: `uv`
 - **Libraries**:
-  - `requests`: 네이버 DataLab API 호출 (POST 요청)
-  - `pandas`: 트렌드 시계열 데이터 가공 및 CSV 변환
-  - `ipykernel`: 데이터 탐색 및 인터랙티브 테스트 지원
-  - `python-dotenv`: API 인증키 환경변수 로드
+  - `requests`: 네이버 DataLab 및 쇼핑인사이트 API 통신
+  - `beautifulsoup4`: 웹 크롤링 및 HTML 파싱
+  - `pandas`: 트렌드 시계열 데이터 구조화 및 통계 집계, CSV 저장
+  - `selenium`: 동적 웹 확장 대비
+  - `ipykernel`: 인터랙티브 주피터 환경 지원
 
 ---
 
 ## 🚀 시작하기
 
 ### 1. 환경 변수 설정
-프로젝트 루트에 `.env` 파일을 생성하고 네이버 개발자 센터에서 발급받은 **데이터랩(검색어트렌드/쇼핑인사이트)** API 키를 등록합니다.
+프로젝트 루트에 `.env` 파일을 생성하고 네이버 클라우드 플랫폼(NCP) 또는 개발자 센터 API 키를 등록합니다.
 ```env
 NAVER_CLIENT_ID=여러분의_클라이언트_ID
 NAVER_CLIENT_SECRET=여러분의_시크릿_키
@@ -48,32 +53,57 @@ NAVER_CLIENT_SECRET=여러분의_시크릿_키
 uv sync
 ```
 
-### 3. 모듈별 실행 방법
+---
 
-#### [담당자 A] 통합 검색어 트렌드 조회
+## 💻 모듈별 실행 방법
+
+### 1. [쇼핑인사이트] 쇼핑 인기검색어 & 고객군별 클릭 분석기 (✅ 개발 완료)
+실시간 인기검색어를 확인하고, 특정 키워드의 기기/성별/연령대별 클릭 비중 및 패턴을 분석합니다.
+
 ```bash
-# 통합 검색어 트렌드 수집 실행 (예시)
-uv run python search_trend_scraper.py
+# 기본 실행 (오늘의 인기 검색어 1위 자동 분석)
+uv run python 쇼핑인사이트/shopping_insight_analyzer.py
+
+# 특정 키워드, 카테고리, 분석기간(일) 지정 실행
+# 사용법: python 쇼핑인사이트/shopping_insight_analyzer.py [검색어] [카테고리ID] [분석기간(일)]
+# 예시: '원피스' 키워드, 패션의류(50000000) 카테고리, 최근 30일 분석
+uv run python 쇼핑인사이트/shopping_insight_analyzer.py "원피스" "50000000" 30
 ```
 
-#### [담당자 B] 쇼핑 검색어 트렌드 조회
+#### 📊 분석 결과 예시 (콘솔 리포트)
+```text
+🔍 [오늘의 네이버 쇼핑 인기 검색어 TOP 10 확인]
+   1위: 원피스 | 2위: 블라우스 | 3위: 올리비아로렌 | 4위: 바람막이 ...
+
+[기기별 비중]   모바일: 89.9% | PC: 10.1%
+[성별 비중]     여성: 95.2% | 남성: 4.8%
+[연령대별 비중] 50대: 38.4% | 40대: 33.0% | 30대: 16.8% | 60대 이상: 10.4% | 20대: 1.4% | 10대: 0.1%
+
+💾 [저장 완료] CSV 파일: data/shopping_insight_50000000_원피스_고객군분석.csv
+```
+
+### 2. [검색어트랜드] 통합 검색어 트렌드 조회 (진행 예정)
 ```bash
-# 쇼핑 카테고리 검색어 트렌드 수집 실행 (예시)
-uv run python shopping_trend_scraper.py
+# 통합 검색어 트렌드 수집 실행 (개발 후 연동 예정)
+uv run python 검색어트랜드/search_trend_scraper.py
 ```
 
 ---
 
-## 📂 프로젝트 구조 (예정)
+## 📂 프로젝트 구조
 ```text
 wepscraping-git/
-├── .env.example                # 환경변수 템플릿 파일
-├── .gitignore                  # Git 추적 제외 목록 (.venv, .env, data/ 등)
-├── GEMINI.md                   # Git 커밋 및 협업 개발 규칙
-├── README.md                   # 프로젝트 협업 안내 문서
-├── pyproject.toml              # uv 프로젝트 의존성 설정
-├── uv.lock                     # 패키지 잠금 파일
-├── search_trend_scraper.py     # [담당자 A] 통합 검색어 트렌드 수집 모듈
-├── shopping_trend_scraper.py   # [담당자 B] 쇼핑 검색어 트렌드 수집 모듈
-└── data/                       # 트렌드 CSV 결과 저장 폴더 (Git 제외)
+├── .env.example                               # 환경변수 템플릿 파일
+├── .gitignore                                 # Git 추적 제외 목록 (.venv, .env, data/ 등)
+├── GEMINI.md                                  # Git 커밋 및 협업 개발 규칙
+├── README.md                                  # 메인 프로젝트 안내 문서
+├── pyproject.toml                             # uv 프로젝트 의존성 설정
+├── uv.lock                                    # 패키지 잠금 파일
+├── naver_news_scraper.py                      # 네이버 뉴스 기사 및 본문 수집 프로그램
+├── 검색어트랜드/                              # [담당자 A] 통합 검색어 트렌드 폴더
+│   └── README.md                              # 모듈 안내 문서
+├── 쇼핑인사이트/                              # [담당자 B] 쇼핑인사이트 폴더
+│   ├── README.md                              # 모듈 상세 가이드
+│   └── shopping_insight_analyzer.py           # ✅ [완료] 쇼핑 인기검색어 & 고객군별 클릭 분석기
+└── data/                                      # 분석 결과 CSV 저장 폴더 (Git 제외)
 ```
